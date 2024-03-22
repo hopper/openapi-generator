@@ -127,6 +127,7 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
 
         String jsonLibrary = JSON_LIBRARY_PROPERTY.getValue(additionalProperties);
 
+        // jsonLibrary seems to always be json4s for some reason. We always use Circe, so hardcode.
         String jsonValueClass = "io.circe.Json";
 
         additionalProperties.put(CodegenConstants.GROUP_ID, groupId);
@@ -189,6 +190,7 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
         supportingFiles.add(new SupportingFile("additionalTypeSerializers.mustache", invokerFolder, "AdditionalTypeSerializers.scala"));
         supportingFiles.add(new SupportingFile("project/build.properties.mustache", "project", "build.properties"));
         supportingFiles.add(new SupportingFile("dateSerializers.mustache", invokerFolder, "DateSerializers.scala"));
+        // this template largely ripped from scala-http4s-server
         final String modelFolder = (sourceFolder + File.separator + modelPackage()).replace('.', File.separatorChar);
         supportingFiles.add(new SupportingFile("types.mustache", modelFolder, "types.scala"));
     }
@@ -255,6 +257,7 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
      */
     @Override
     public Map<String, ModelsMap> postProcessAllModels(Map<String, ModelsMap> objs) {
+        // taken from scala-http4s-server
         final Map<String, ModelsMap> modelsMap = super.postProcessAllModels(objs);
         for (ModelsMap mm : modelsMap.values()) {
             for (ModelMap model : mm.getModels()) {
@@ -283,7 +286,7 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
                 for (CodegenProperty prop : cModel.vars) {
                     Set<String> imports = new TreeSet<>();
                     System.out.println("setting type to " + prop.getDataType());
-                    prop.getVendorExtensions().putAll(refineProp(prop, imports));
+                    prop.getVendorExtensions().putAll(setXTypes(prop, imports));
 
 
                     cModel.imports.addAll(imports);
@@ -298,6 +301,7 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
         return modelsMap;
     }
 
+    // following two methods taken from scala-http4s-server, but have the refined bits removed
     private Map<String, Object> setXType(String dataType) {
         Map<String, Object> vendorExtensions = new HashMap<>();
 
@@ -306,7 +310,7 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
         return vendorExtensions;
     }
 
-    private Map<String, Object> refineProp(IJsonSchemaValidationProperties prop, Set<String> imports) {
+    private Map<String, Object> setXTypes(IJsonSchemaValidationProperties prop, Set<String> imports) {
         Map<String, Object> vendorExtensions = new HashMap<>();
 
         vendorExtensions.put("x-type", prop.getDataType());
@@ -329,7 +333,7 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
         }
 
         if (prop.getIsArray() && prop.getItems() != null) {
-            Map<String, Object> subVendorExtensions = refineProp(prop.getItems(), imports);
+            Map<String, Object> subVendorExtensions = setXTypes(prop.getItems(), imports);
             prop.getItems().getVendorExtensions().putAll(subVendorExtensions);
 
             vendorExtensions.putAll(setXType(prop.getDataType()));
@@ -341,7 +345,7 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
 
     @Override
     public Map<String, Object> postProcessSupportingFileData(Map<String, Object> objs) {
-        System.out.println("doing post process");
+        // again from scala-http4s-server, with the auth bits removed
         Map<String, Object> bundle = super.postProcessSupportingFileData(objs);
 
         List<ModelMap> models = (List<ModelMap>) bundle.get("models");
@@ -360,31 +364,7 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
             }
         }
         bundle.put("imports", allImports);
-        // bundle.put("packageName", packageName);
-
-
-        // ApiInfoMap apiInfoMap = (ApiInfoMap) bundle.get("apiInfo");
-        // Map<String, List<String>> authToOperationMap = new TreeMap<>();
-        // for (OperationsMap op : apiInfoMap.getApis()) {
-        //     List<HashMap<String, Object>> opsByAuth = (List<HashMap<String, Object>>) op.get("operationsByAuth");
-        //     for (HashMap<String, Object> auth : opsByAuth) {
-        //         String autName = (String) auth.get("auth");
-        //         String classname = (String) op.get("classname");
-        //         List<String> classnames = authToOperationMap.computeIfAbsent(autName, k -> new ArrayList<>());
-        //         classnames.add(classname);
-        //     }
-        // }
-
-        // bundle.put("authToOperationMap",
-        //         authToOperationMap.entrySet().stream().map(ent -> {
-        //             Map<String, Object> tuple = new HashMap<>();
-        //             String auth = ent.getKey();
-        //             tuple.put("auth", auth);
-        //             tuple.put("ops", ent.getValue());
-        //             tuple.put("addMiddleware", !"".equals(auth));
-        //             return tuple;
-        //         }).collect(Collectors.toList())
-        // );
+        
         return bundle;
     }
 
@@ -420,10 +400,7 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
                 String importPath = iterator.next().get("import");
                 Map<String, String> item = new HashMap<>();
                 if (importPath.startsWith(prefix)) {
-                    // if (isEnumClass(importPath, enumRefs)) {
-                    //     item.put("import", importPath.concat("._"));
-                    //     newImports.add(item);
-                    // }
+                    // remove enum support here, it's unused
                 }
                 else {
                     item.put("import", importPath);
