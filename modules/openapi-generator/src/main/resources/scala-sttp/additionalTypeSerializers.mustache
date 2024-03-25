@@ -25,6 +25,8 @@ object AdditionalTypeSerializers {
 }
 {{/json4s}}
 {{#circe}}
+import io.circe.generic.extras.Configuration
+
 trait AdditionalTypeSerializers {
     import io.circe._
 
@@ -41,5 +43,20 @@ trait AdditionalTypeSerializers {
      implicit final lazy val URIEncoder: Encoder[URI] = new Encoder[URI] {
       final def apply(a: URI): Json = Json.fromString(a.toString)
   }
+
+{{#forceSnakeCaseSerialization}}
+  implicit val circeConfig: Configuration =
+    Configuration.default.withSnakeCaseMemberNames.withSnakeCaseConstructorNames.withDiscriminator(
+      "type",
+    ).withDefaults
+{{/forceSnakeCaseSerialization}}
+{{^forceSnakeCaseSerialization}}
+  implicit val circeConfig: Configuration =
+    Configuration.default.withDiscriminator(
+      "type",
+    ).withDefaults
+{{/forceSnakeCaseSerialization}}
 }
+
+object AdditionalTypeSerializers extends AdditionalTypeSerializers
 {{/circe}}

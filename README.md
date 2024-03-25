@@ -1,3 +1,14 @@
+<h1>Hopper Notes</h1>
+
+This fork is to support some Hopper-specific changes to the scala-sttp generator. Inspiration has been taken from the scala-http4s-server generator to support `oneOf`, but other minor changes
+have also been made.
+
+To publish and use a new version:
+- make code changes
+- `mvn package`
+- `cp modules/openapi-generator-cli/target/openapi-generator-cli.jar <internal repo where used>`
+
+
 <h1 align="center">OpenAPI Generator</h1>
 
 

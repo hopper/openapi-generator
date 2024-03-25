@@ -63,12 +63,14 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
 
     private static final JsonLibraryProperty JSON_LIBRARY_PROPERTY = new JsonLibraryProperty();
 
+    private static final ForceSnakeCaseSerializationProperty FORCE_SNAKE_CASE_SERIALIZATION_PROPERTY = new ForceSnakeCaseSerializationProperty();
+
     public static final String DEFAULT_PACKAGE_NAME = "org.openapitools.client";
     private static final PackageProperty PACKAGE_PROPERTY = new PackageProperty();
 
     private static final List<Property<?>> properties = Arrays.asList(
             STTP_CLIENT_VERSION, USE_SEPARATE_ERROR_CHANNEL, JODA_TIME_VERSION,
-            JSON4S_VERSION, JSON_LIBRARY_PROPERTY, PACKAGE_PROPERTY);
+            JSON4S_VERSION, JSON_LIBRARY_PROPERTY, PACKAGE_PROPERTY, FORCE_SNAKE_CASE_SERIALIZATION_PROPERTY);
 
     private final Logger LOGGER = LoggerFactory.getLogger(ScalaSttpClientCodegen.class);
 
@@ -114,13 +116,19 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
         );
 
         outputFolder = "generated-code/scala-sttp";
-        modelTemplateFiles.put("model.mustache", ".scala");
         apiTemplateFiles.put("api.mustache", ".scala");
         embeddedTemplateDir = templateDir = "scala-sttp";
 
+        useOneOfInterfaces = true;
+        supportsMultipleInheritance = true;
+        supportsInheritance = true;
+        supportsMixins = true;
+        addOneOfInterfaceImports = true;
+
         String jsonLibrary = JSON_LIBRARY_PROPERTY.getValue(additionalProperties);
 
-        String jsonValueClass = "circe".equals(jsonLibrary) ? "io.circe.Json" : "org.json4s.JValue";
+        // jsonLibrary seems to always be json4s for some reason. We always use Circe, so hardcode.
+        String jsonValueClass = "io.circe.Json";
 
         additionalProperties.put(CodegenConstants.GROUP_ID, groupId);
         additionalProperties.put(CodegenConstants.ARTIFACT_ID, artifactId);
@@ -151,7 +159,7 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
         typeMapping.put("short", "Short");
         typeMapping.put("char", "Char");
         typeMapping.put("double", "Double");
-        typeMapping.put("object", "Any");
+        typeMapping.put("object", jsonValueClass);
         typeMapping.put("file", "File");
         typeMapping.put("binary", "File");
         typeMapping.put("number", "Double");
@@ -179,10 +187,12 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
         supportingFiles.add(new SupportingFile("README.mustache", "", "README.md"));
         supportingFiles.add(new SupportingFile("build.sbt.mustache", "", "build.sbt"));
         final String invokerFolder = (sourceFolder + File.separator + invokerPackage).replace(".", File.separator);
-        supportingFiles.add(new SupportingFile("jsonSupport.mustache", invokerFolder, "JsonSupport.scala"));
         supportingFiles.add(new SupportingFile("additionalTypeSerializers.mustache", invokerFolder, "AdditionalTypeSerializers.scala"));
         supportingFiles.add(new SupportingFile("project/build.properties.mustache", "project", "build.properties"));
         supportingFiles.add(new SupportingFile("dateSerializers.mustache", invokerFolder, "DateSerializers.scala"));
+        // this template largely ripped from scala-http4s-server
+        final String modelFolder = (sourceFolder + File.separator + modelPackage()).replace('.', File.separatorChar);
+        supportingFiles.add(new SupportingFile("types.mustache", modelFolder, "types.scala"));
     }
 
     @Override
@@ -247,9 +257,115 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
      */
     @Override
     public Map<String, ModelsMap> postProcessAllModels(Map<String, ModelsMap> objs) {
-        final Map<String, ModelsMap> processed = super.postProcessAllModels(objs);
-        postProcessUpdateImports(processed);
-        return processed;
+        // taken from scala-http4s-server
+        final Map<String, ModelsMap> modelsMap = super.postProcessAllModels(objs);
+        for (ModelsMap mm : modelsMap.values()) {
+            for (ModelMap model : mm.getModels()) {
+                // model oneOf as sealed trait
+
+                CodegenModel cModel = model.getModel();
+                cModel.getVendorExtensions().put("x-isSealedTrait", !cModel.oneOf.isEmpty());
+
+                if (cModel.discriminator != null) {
+                    cModel.getVendorExtensions().put("x-use-discr", true);
+
+                    if (cModel.discriminator.getMapping() != null) {
+                        cModel.getVendorExtensions().put("x-use-discr-mapping", true);
+                    }
+                }
+                //
+                try {
+                    List<String> exts = (List<String>) cModel.getVendorExtensions().get("x-implements");
+                    if (exts != null) {
+                        cModel.getVendorExtensions().put("x-extends", exts.subList(0, 1));
+                        cModel.getVendorExtensions().put("x-extendsWith", exts.subList(1, exts.size()));
+                    }
+                } catch (IndexOutOfBoundsException ignored) {
+                }
+
+                for (CodegenProperty prop : cModel.vars) {
+                    Set<String> imports = new TreeSet<>();
+                    System.out.println("setting type to " + prop.getDataType());
+                    prop.getVendorExtensions().putAll(setXTypes(prop, imports));
+
+
+                    cModel.imports.addAll(imports);
+                }
+
+                // filter out `type` field
+                cModel.vars.removeIf(p -> "`type`".equals(p.name));
+            }
+        }
+
+        postProcessUpdateImports(modelsMap);
+        return modelsMap;
+    }
+
+    // following two methods taken from scala-http4s-server, but have the refined bits removed
+    private Map<String, Object> setXType(String dataType) {
+        Map<String, Object> vendorExtensions = new HashMap<>();
+
+        vendorExtensions.put("x-type", dataType);
+
+        return vendorExtensions;
+    }
+
+    private Map<String, Object> setXTypes(IJsonSchemaValidationProperties prop, Set<String> imports) {
+        Map<String, Object> vendorExtensions = new HashMap<>();
+
+        vendorExtensions.put("x-type", prop.getDataType());
+
+        if (prop.getIsString()) {
+            vendorExtensions.putAll(setXType(prop.getDataType()));
+        }
+
+        if ("Int".equals(prop.getDataType())
+                || "Long".equals(prop.getDataType())
+                || "Float".equals(prop.getDataType())
+                || "Double".equals(prop.getDataType())
+                || "BigDecimal".equals(prop.getDataType())
+        ) {
+            vendorExtensions.putAll(setXType(prop.getDataType()));
+        }
+
+        if (prop.getIsUuid() || "Uuid".equals(prop.getDataType())) {
+            prop.setDataType("UUID");
+        }
+
+        if (prop.getIsArray() && prop.getItems() != null) {
+            Map<String, Object> subVendorExtensions = setXTypes(prop.getItems(), imports);
+            prop.getItems().getVendorExtensions().putAll(subVendorExtensions);
+
+            vendorExtensions.putAll(setXType(prop.getDataType()));
+        }
+
+        return vendorExtensions;
+    }
+
+
+    @Override
+    public Map<String, Object> postProcessSupportingFileData(Map<String, Object> objs) {
+        // again from scala-http4s-server, with the auth bits removed
+        Map<String, Object> bundle = super.postProcessSupportingFileData(objs);
+
+        List<ModelMap> models = (List<ModelMap>) bundle.get("models");
+        TreeSet<String> allImports = new TreeSet<>();
+        for (ModelMap mm : models) {
+            for (String nextImport : mm.getModel().imports) {
+                String mapping = importMapping().get(nextImport);
+                if (mapping != null && !defaultIncludes().contains(mapping)) {
+                    allImports.add(mapping);
+                }
+                // add instantiation types
+                mapping = instantiationTypes().get(nextImport);
+                if (mapping != null && !defaultIncludes().contains(mapping)) {
+                    allImports.add(mapping);
+                }
+            }
+        }
+        bundle.put("imports", allImports);
+        
+        return bundle;
     }
 
     /**
@@ -284,10 +400,7 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
                 String importPath = iterator.next().get("import");
                 Map<String, String> item = new HashMap<>();
                 if (importPath.startsWith(prefix)) {
-                    if (isEnumClass(importPath, enumRefs)) {
-                        item.put("import", importPath.concat("._"));
-                        newImports.add(item);
-                    }
+                    // remove enum support here, it's unused
                 }
                 else {
                     item.put("import", importPath);
@@ -555,6 +668,12 @@ public class ScalaSttpClientCodegen extends AbstractScalaCodegen implements Code
                                 "or " + JSON4S);
                 throw exception;
             }
+        }
+    }
+
+    public static class ForceSnakeCaseSerializationProperty extends BooleanProperty {
+        public ForceSnakeCaseSerializationProperty() {
+            super("forceSnakeCaseSerialization", "Whether to encode Scala identifiers using snake case", false);
         }
     }
 
